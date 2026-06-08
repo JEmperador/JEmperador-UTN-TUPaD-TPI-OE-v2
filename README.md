@@ -165,3 +165,5 @@ python-dotenv==1.0.1
 - [**Manual de usuario**](Documentacion/MANUAL_DE_USUARIO.md)
 - [**Diccionario de datos**](Documentacion/DICCIONARIO_DATOS.md)
 - [**Maquina de estados**](Documentacion/ESTADOS_BOT.md)
+- [**Capturas de bot**](Documentacion/Capturas)
+- [**BPMN AS-IS y TO-BE**](Documentacion/BPMN)
