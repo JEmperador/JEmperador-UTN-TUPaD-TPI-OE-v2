@@ -7,11 +7,11 @@ import logging
 import re
 import os
 import time
+import asyncio
 from datetime import datetime
 from dotenv import load_dotenv
 
 import openpyxl
-import asyncio
 
 from telegram import Update
 from telegram.ext import (
@@ -70,13 +70,13 @@ CATEGORIAS = {
 # ESTADOS (Máquina de Estados)
 # ==========================================================
 
-ESTADO_ESPERANDO_NUMERO = "ESPERANDO_NUMERO"
-ESTADO_ESPERANDO_CATEGORIA = "ESPERANDO_CATEGORIA"
+ESTADO_ESPERANDO_NUMERO       = "ESPERANDO_NUMERO"
+ESTADO_ESPERANDO_CATEGORIA    = "ESPERANDO_CATEGORIA"
 ESTADO_ESPERANDO_CONFIRMACION = "ESPERANDO_CONFIRMACION"
-ESTADO_ESPERANDO_EMAIL = "ESPERANDO_EMAIL"
-ESTADO_CERRADO = "CERRADO"
-ESTADO_TICKET_GENERADO = "TICKET_GENERADO"
-ESTADO_FALLIDO = "FALLIDO"
+ESTADO_ESPERANDO_EMAIL        = "ESPERANDO_EMAIL"
+ESTADO_CERRADO                = "CERRADO"
+ESTADO_TICKET_GENERADO        = "TICKET_GENERADO"
+ESTADO_FALLIDO                = "FALLIDO"
 
 # ==========================================================
 # LOGGING
@@ -103,6 +103,8 @@ def inicializar_excel():
       - Sesiones  → estado actual de cada conversación activa
       - Historial → log completo de interacciones
     """
+    os.makedirs("Datos", exist_ok=True)
+
     if os.path.exists(EXCEL_PATH):
         return
 
@@ -111,81 +113,27 @@ def inicializar_excel():
     # ── Hoja Clientes ──────────────────────────────────────
     ws_clientes = wb.active
     ws_clientes.title = "Clientes"
-    ws_clientes.append(
-        [
-            "numero_cliente",
-            "nombre_completo",
-            "telefono",
-            "email",
-            "servicio_contratado",
-            "ticket_asociado",
-            "fecha_alta",
-        ]
-    )
-    # Datos de ejemplo para poder probar el bot
-    ws_clientes.append(
-        [
-            "CLI-0001",
-            "García, Laura",
-            "+54 11 4567-8901",
-            "laura@gmail.com",
-            "Internet Fibra 100Mbps",
-            "",
-            "15-03-2023",
-        ]
-    )
-    ws_clientes.append(
-        [
-            "CLI-0002",
-            "Martínez, Carlos",
-            "+54 11 5678-9012",
-            "carlos@gmail.com",
-            "Internet + Telefonía",
-            "",
-            "20-07-2022",
-        ]
-    )
-    ws_clientes.append(
-        [
-            "CLI-0003",
-            "López, Ana",
-            "+54 11 6789-0123",
-            "ana@hotmail.com",
-            "Internet Fibra 50Mbps",
-            "",
-            "01-01-2024",
-        ]
-    )
+    ws_clientes.append([
+        "numero_cliente", "nombre_completo", "telefono",
+        "email", "servicio_contratado", "ticket_asociado", "fecha_alta",
+    ])
+    ws_clientes.append(["CLI-0001", "García, Laura",    "+54 11 4567-8901", "laura@gmail.com",  "Internet Fibra 100Mbps", "", "15-03-2023"])
+    ws_clientes.append(["CLI-0002", "Martínez, Carlos", "+54 11 5678-9012", "carlos@gmail.com", "Internet + Telefonía",   "", "20-07-2022"])
+    ws_clientes.append(["CLI-0003", "López, Ana",       "+54 11 6789-0123", "ana@hotmail.com",  "Internet Fibra 50Mbps",  "", "01-01-2024"])
 
     # ── Hoja Sesiones ──────────────────────────────────────
     ws_sesiones = wb.create_sheet("Sesiones")
-    ws_sesiones.append(
-        [
-            "telegram_id",
-            "numero_cliente",
-            "estado_actual",
-            "intentos_numero",
-            "categoria_seleccionada",
-            "email_contacto",
-            "ticket_id",
-            "ultimo_contacto",
-        ]
-    )
+    ws_sesiones.append([
+        "telegram_id", "numero_cliente", "estado_actual", "intentos_numero",
+        "categoria_seleccionada", "email_contacto", "ticket_id", "ultimo_contacto",
+    ])
 
     # ── Hoja Historial ─────────────────────────────────────
     ws_historial = wb.create_sheet("Historial")
-    ws_historial.append(
-        [
-            "id_interaccion",
-            "telegram_id",
-            "numero_cliente",
-            "fecha_hora",
-            "accion",
-            "detalle",
-            "resultado",
-            "ticket_id",
-        ]
-    )
+    ws_historial.append([
+        "id_interaccion", "telegram_id", "numero_cliente",
+        "fecha_hora", "accion", "detalle", "resultado", "ticket_id",
+    ])
 
     wb.save(EXCEL_PATH)
     logger.info(f"Excel creado en: {EXCEL_PATH}")
@@ -223,7 +171,7 @@ def obtener_proximo_ticket_id() -> str:
         ws = wb["Historial"]
         maximo = 0
         for fila in ws.iter_rows(min_row=2, values_only=True):
-            ticket = fila[7]  # columna ticket_id
+            ticket = fila[7]
             if ticket and str(ticket).startswith("TKT-"):
                 numero = int(str(ticket).replace("TKT-", ""))
                 if numero > maximo:
@@ -244,29 +192,25 @@ def upsert_sesion(telegram_id: int, datos: dict):
         ws = wb["Sesiones"]
         for fila in ws.iter_rows(min_row=2):
             if fila[0].value == telegram_id:
-                fila[0].value = telegram_id
-                fila[1].value = datos.get("numero_cliente", fila[1].value)
-                fila[2].value = datos.get("estado_actual", fila[2].value)
-                fila[3].value = datos.get("intentos_numero", fila[3].value)
-                fila[4].value = datos.get("categoria_seleccionada", fila[4].value)
-                fila[5].value = datos.get("email_contacto", fila[5].value)
-                fila[6].value = datos.get("ticket_id", fila[6].value)
+                fila[1].value = datos.get("numero_cliente",        fila[1].value)
+                fila[2].value = datos.get("estado_actual",         fila[2].value)
+                fila[3].value = datos.get("intentos_numero",       fila[3].value)
+                fila[4].value = datos.get("categoria_seleccionada",fila[4].value)
+                fila[5].value = datos.get("email_contacto",        fila[5].value)
+                fila[6].value = datos.get("ticket_id",             fila[6].value)
                 fila[7].value = _timestamp()
                 wb.save(EXCEL_PATH)
                 return
-        # No existe → insertar nueva fila
-        ws.append(
-            [
-                telegram_id,
-                datos.get("numero_cliente", ""),
-                datos.get("estado_actual", ""),
-                datos.get("intentos_numero", 0),
-                datos.get("categoria_seleccionada", ""),
-                datos.get("email_contacto", ""),
-                datos.get("ticket_id", ""),
-                _timestamp(),
-            ]
-        )
+        ws.append([
+            telegram_id,
+            datos.get("numero_cliente", ""),
+            datos.get("estado_actual", ""),
+            datos.get("intentos_numero", 0),
+            datos.get("categoria_seleccionada", ""),
+            datos.get("email_contacto", ""),
+            datos.get("ticket_id", ""),
+            _timestamp(),
+        ])
         wb.save(EXCEL_PATH)
     except Exception as e:
         logger.error(f"Error en upsert_sesion: {e}")
@@ -279,7 +223,7 @@ def actualizar_ticket_en_cliente(numero_cliente: str, ticket_id: str):
         ws = wb["Clientes"]
         for fila in ws.iter_rows(min_row=2):
             if str(fila[0].value).strip() == numero_cliente.strip():
-                fila[5].value = ticket_id  # columna ticket_asociado
+                fila[5].value = ticket_id
                 wb.save(EXCEL_PATH)
                 return
     except Exception as e:
@@ -301,23 +245,14 @@ def registrar_historial(
     try:
         wb = openpyxl.load_workbook(EXCEL_PATH)
         ws = wb["Historial"]
-        # Calcular próximo id_interaccion
         max_id = 0
         for fila in ws.iter_rows(min_row=2, values_only=True):
             if fila[0] and isinstance(fila[0], int):
                 max_id = max(max_id, fila[0])
-        ws.append(
-            [
-                max_id + 1,
-                telegram_id,
-                numero_cliente,
-                _timestamp(),
-                accion,
-                detalle,
-                resultado,
-                ticket_id,
-            ]
-        )
+        ws.append([
+            max_id + 1, telegram_id, numero_cliente,
+            _timestamp(), accion, detalle, resultado, ticket_id,
+        ])
         wb.save(EXCEL_PATH)
     except Exception as e:
         logger.error(f"Error al registrar historial: {e}")
@@ -342,7 +277,7 @@ def validar_categoria(texto: str) -> bool:
 
 
 # ==========================================================
-# TIMEOUT
+# TIMEOUT (pasivo — se activa cuando el usuario manda un mensaje)
 # ==========================================================
 
 
@@ -351,6 +286,12 @@ def actualizar_timestamp(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def verificar_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    Verifica si la sesión expiró por inactividad.
+    Se llama al inicio de cada handler de mensaje.
+    El timeout es pasivo: se detecta cuando el usuario vuelve a escribir
+    después de 3 minutos de inactividad.
+    """
     ultimo = context.user_data.get("ultimo_mensaje")
     if ultimo and (time.time() - ultimo) > TIMEOUT_SEGUNDOS:
         telegram_id = update.effective_user.id
@@ -371,47 +312,9 @@ async def verificar_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return False
 
 
-async def verificar_inactividad(context: ContextTypes.DEFAULT_TYPE):
-    """Job periódico que detecta sesiones inactivas y las cierra."""
-    chat_id = context.job.chat_id
-    user_data = context.application.user_data.get(chat_id, {})
-    ultimo = user_data.get("ultimo_mensaje")
-    estado = user_data.get("estado")
-
-    if not ultimo or estado in [
-        None,
-        ESTADO_CERRADO,
-        ESTADO_TICKET_GENERADO,
-        ESTADO_FALLIDO,
-    ]:
-        return
-
-    if (time.time() - ultimo) > TIMEOUT_SEGUNDOS:
-        registrar_historial(
-            telegram_id=chat_id,
-            accion="TIMEOUT",
-            resultado="FALLIDO",
-            numero_cliente=user_data.get("numero_cliente", ""),
-        )
-        user_data.clear()
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=(
-                "⏱ Tu sesión expiró por inactividad (3 minutos).\n"
-                "Escribí /start para iniciar una nueva consulta.\n\n"
-                f"📧 Consultas: {EMAIL_SOPORTE}"
-            ),
-        )
-
-
 # ==========================================================
 # HELPERS
 # ==========================================================
-
-
-def cancelar_jobs(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    for job in context.job_queue.get_jobs_by_name(str(chat_id)):
-        job.schedule_removal()
 
 
 def texto_categorias() -> str:
@@ -427,7 +330,6 @@ def texto_categorias() -> str:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cancelar_jobs(context, update.effective_chat.id)
     context.user_data.clear()
     context.user_data["estado"] = ESTADO_ESPERANDO_NUMERO
     context.user_data["intentos_numero"] = 0
@@ -435,25 +337,14 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     telegram_id = update.effective_user.id
 
-    upsert_sesion(
-        telegram_id,
-        {
-            "estado_actual": ESTADO_ESPERANDO_NUMERO,
-            "intentos_numero": 0,
-        },
-    )
+    upsert_sesion(telegram_id, {
+        "estado_actual": ESTADO_ESPERANDO_NUMERO,
+        "intentos_numero": 0,
+    })
     registrar_historial(
         telegram_id=telegram_id,
         accion="INICIO_SESION",
         resultado="EXITOSO",
-    )
-
-    context.job_queue.run_repeating(
-        verificar_inactividad,
-        interval=30,
-        first=30,
-        chat_id=update.effective_chat.id,
-        name=str(update.effective_chat.id),
     )
 
     await update.message.reply_text(
@@ -467,7 +358,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cancelar_jobs(context, update.effective_chat.id)
     telegram_id = update.effective_user.id
     registrar_historial(
         telegram_id=telegram_id,
@@ -475,13 +365,10 @@ async def cmd_cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         resultado="FALLIDO",
         numero_cliente=context.user_data.get("numero_cliente", ""),
     )
-    upsert_sesion(
-        telegram_id,
-        {
-            "estado_actual": ESTADO_FALLIDO,
-            "numero_cliente": context.user_data.get("numero_cliente", ""),
-        },
-    )
+    upsert_sesion(telegram_id, {
+        "estado_actual": ESTADO_FALLIDO,
+        "numero_cliente": context.user_data.get("numero_cliente", ""),
+    })
     context.user_data.clear()
     await update.message.reply_text(
         "❌ Consulta cancelada.\n"
@@ -505,17 +392,15 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_estado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     estado = context.user_data.get("estado")
     mensajes = {
-        ESTADO_ESPERANDO_NUMERO: "Estoy esperando tu número de cliente (CLI-XXXX).",
-        ESTADO_ESPERANDO_CATEGORIA: "Estoy esperando que selecciones la categoría del problema (1 al 5).",
+        ESTADO_ESPERANDO_NUMERO:       "Estoy esperando tu número de cliente (CLI-XXXX).",
+        ESTADO_ESPERANDO_CATEGORIA:    "Estoy esperando que selecciones la categoría del problema (1 al 5).",
         ESTADO_ESPERANDO_CONFIRMACION: "Estoy esperando que confirmes si el problema se resolvió (sí/no).",
-        ESTADO_ESPERANDO_EMAIL: "Estoy esperando tu email de contacto para el técnico.",
-        ESTADO_CERRADO: "Tu consulta fue cerrada exitosamente.",
-        ESTADO_TICKET_GENERADO: "Hay un ticket abierto. El técnico se contactará pronto.",
-        ESTADO_FALLIDO: "La sesión terminó. Escribí /start para iniciar de nuevo.",
+        ESTADO_ESPERANDO_EMAIL:        "Estoy esperando tu email de contacto para el técnico.",
+        ESTADO_CERRADO:                "Tu consulta fue cerrada exitosamente.",
+        ESTADO_TICKET_GENERADO:        "Hay un ticket abierto. El técnico se contactará pronto.",
+        ESTADO_FALLIDO:                "La sesión terminó. Escribí /start para iniciar de nuevo.",
     }
-    texto = mensajes.get(
-        estado, "No hay una consulta activa. Escribí /start para comenzar."
-    )
+    texto = mensajes.get(estado, "No hay una consulta activa. Escribí /start para comenzar.")
     await update.message.reply_text(f"📍 {texto}")
 
 
@@ -535,14 +420,16 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Sin sesión activa
     if not estado:
         await update.message.reply_text(
-            "No hay una consulta activa.\n" "Escribí /start para comenzar."
+            "No hay una consulta activa.\n"
+            "Escribí /start para comenzar."
         )
         return
 
     # Estados finales: no procesar más input
     if estado in [ESTADO_CERRADO, ESTADO_TICKET_GENERADO]:
         await update.message.reply_text(
-            "Tu consulta ya fue procesada.\n" "Escribí /start para iniciar una nueva.",
+            "Tu consulta ya fue procesada.\n"
+            "Escribí /start para iniciar una nueva.",
         )
         return
 
@@ -558,7 +445,6 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         numero = texto.upper()
 
         if not validar_numero_cliente(numero):
-            # Formato inválido — cuenta como intento
             context.user_data["intentos_numero"] += 1
             intentos = context.user_data["intentos_numero"]
             registrar_historial(
@@ -569,10 +455,7 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             if intentos >= MAX_INTENTOS_NUMERO:
                 context.user_data["estado"] = ESTADO_FALLIDO
-                upsert_sesion(
-                    telegram_id,
-                    {"estado_actual": ESTADO_FALLIDO, "intentos_numero": intentos},
-                )
+                upsert_sesion(telegram_id, {"estado_actual": ESTADO_FALLIDO, "intentos_numero": intentos})
                 await update.message.reply_text(
                     "❌ Superaste el límite de intentos.\n"
                     "Escribí /start cuando estés listo para intentarlo de nuevo.\n\n"
@@ -600,10 +483,7 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             if intentos >= MAX_INTENTOS_NUMERO:
                 context.user_data["estado"] = ESTADO_FALLIDO
-                upsert_sesion(
-                    telegram_id,
-                    {"estado_actual": ESTADO_FALLIDO, "intentos_numero": intentos},
-                )
+                upsert_sesion(telegram_id, {"estado_actual": ESTADO_FALLIDO, "intentos_numero": intentos})
                 await update.message.reply_text(
                     "❌ Superaste el límite de intentos.\n"
                     "Escribí /start cuando estés listo para intentarlo de nuevo.\n\n"
@@ -622,14 +502,11 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Cliente válido → avanzar
         context.user_data["numero_cliente"] = numero
         context.user_data["estado"] = ESTADO_ESPERANDO_CATEGORIA
-        upsert_sesion(
-            telegram_id,
-            {
-                "numero_cliente": numero,
-                "estado_actual": ESTADO_ESPERANDO_CATEGORIA,
-                "intentos_numero": context.user_data["intentos_numero"],
-            },
-        )
+        upsert_sesion(telegram_id, {
+            "numero_cliente": numero,
+            "estado_actual": ESTADO_ESPERANDO_CATEGORIA,
+            "intentos_numero": context.user_data["intentos_numero"],
+        })
         registrar_historial(
             telegram_id=telegram_id,
             accion="NUMERO_VALIDADO",
@@ -637,7 +514,7 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             numero_cliente=numero,
         )
         await update.message.reply_text(
-            f"✅ Cliente *{numero}* verificado.\n\n" f"{texto_categorias()}",
+            f"✅ Cliente *{numero}* verificado.\n\n{texto_categorias()}",
             parse_mode="Markdown",
         )
         return
@@ -664,16 +541,13 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             detalle=f"Categoría: {nombre_categoria}",
         )
 
-        # Categoría 5 "Otro problema" deriva directo a ticket sin mostrar soluciones
+        # Categoría 5 deriva directo a ticket sin mostrar soluciones
         if soluciones is None:
             context.user_data["estado"] = ESTADO_ESPERANDO_EMAIL
-            upsert_sesion(
-                telegram_id,
-                {
-                    "estado_actual": ESTADO_ESPERANDO_EMAIL,
-                    "categoria_seleccionada": nombre_categoria,
-                },
-            )
+            upsert_sesion(telegram_id, {
+                "estado_actual": ESTADO_ESPERANDO_EMAIL,
+                "categoria_seleccionada": nombre_categoria,
+            })
             await update.message.reply_text(
                 "Entendido. Para derivar tu caso a un técnico necesito tu *email de contacto*.\n"
                 "Ejemplo: *tucorreo@gmail.com*",
@@ -681,15 +555,12 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Mostrar soluciones frecuentes (Gateway 2 próximo paso)
+        # Mostrar soluciones frecuentes
         context.user_data["estado"] = ESTADO_ESPERANDO_CONFIRMACION
-        upsert_sesion(
-            telegram_id,
-            {
-                "estado_actual": ESTADO_ESPERANDO_CONFIRMACION,
-                "categoria_seleccionada": nombre_categoria,
-            },
-        )
+        upsert_sesion(telegram_id, {
+            "estado_actual": ESTADO_ESPERANDO_CONFIRMACION,
+            "categoria_seleccionada": nombre_categoria,
+        })
         registrar_historial(
             telegram_id=telegram_id,
             accion="SOLUCION_MOSTRADA",
@@ -719,7 +590,6 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 resultado="EXITOSO",
                 numero_cliente=numero_cliente,
             )
-            cancelar_jobs(context, update.effective_chat.id)
             await update.message.reply_text(
                 "✅ ¡Nos alegra que se haya resuelto!\n\n"
                 "Tu caso fue cerrado exitosamente.\n"
@@ -764,14 +634,11 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["ticket_id"] = ticket_id
         context.user_data["estado"] = ESTADO_TICKET_GENERADO
 
-        upsert_sesion(
-            telegram_id,
-            {
-                "estado_actual": ESTADO_TICKET_GENERADO,
-                "email_contacto": texto,
-                "ticket_id": ticket_id,
-            },
-        )
+        upsert_sesion(telegram_id, {
+            "estado_actual": ESTADO_TICKET_GENERADO,
+            "email_contacto": texto,
+            "ticket_id": ticket_id,
+        })
         actualizar_ticket_en_cliente(numero_cliente, ticket_id)
         registrar_historial(
             telegram_id=telegram_id,
@@ -789,7 +656,6 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ticket_id=ticket_id,
         )
 
-        cancelar_jobs(context, update.effective_chat.id)
         await update.message.reply_text(
             f"🎫 *Ticket generado: {ticket_id}*\n\n"
             f"Un técnico especialista revisará tu caso y se contactará "
@@ -823,27 +689,23 @@ async def manejar_no_soportado(update: Update, context: ContextTypes.DEFAULT_TYP
 
 def main():
     asyncio.set_event_loop(asyncio.new_event_loop())
-    
+
     inicializar_excel()
 
-    app = Application.builder().token(TOKEN).build()
+    # job_queue=None evita el error de weakref en Python 3.14
+    app = Application.builder().token(TOKEN).job_queue(None).build()
 
-    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("start",    cmd_start))
     app.add_handler(CommandHandler("cancelar", cmd_cancelar))
-    app.add_handler(CommandHandler("ayuda", cmd_ayuda))
-    app.add_handler(CommandHandler("estado", cmd_estado))
+    app.add_handler(CommandHandler("ayuda",    cmd_ayuda))
+    app.add_handler(CommandHandler("estado",   cmd_estado))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))
-    app.add_handler(
-        MessageHandler(
-            filters.PHOTO
-            | filters.Document.ALL
-            | filters.AUDIO
-            | filters.VIDEO
-            | filters.Sticker.ALL,
-            manejar_no_soportado,
-        )
-    )
+    app.add_handler(MessageHandler(
+        filters.PHOTO | filters.Document.ALL | filters.AUDIO
+        | filters.VIDEO | filters.Sticker.ALL,
+        manejar_no_soportado,
+    ))
 
     logger.info("Bot iniciado. Esperando mensajes...")
     app.run_polling()
